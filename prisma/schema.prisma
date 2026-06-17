@@ -1,0 +1,265 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum RuleStatus {
+  draft
+  published
+  archived
+}
+
+enum RunType {
+  official
+  manual_recompute
+  what_if
+}
+
+enum RunStatus {
+  draft
+  published
+  archived
+  abandoned
+}
+
+enum CheckType {
+  onsite
+  offsite
+}
+
+enum TaskStatus {
+  pending
+  completed
+  delayed
+  exempted
+  unplaceable
+  manual_needed
+}
+
+model Project {
+  id                   String   @id
+  name                 String
+  partyType            String
+  groupId              String?
+  dept                 String
+  riskGrade            String
+  isNpl                Boolean
+  customerType         String
+  industry             String
+  hospitalType         String?
+  bizType              String
+  exposureInit         Decimal
+  exposureBalance      Decimal
+  creditStart          DateTime
+  creditEnd            DateTime
+  termHalf             DateTime?
+  gridConnected        Boolean?
+  accountMonitored     Boolean?
+  realtimeMonitored    Boolean?
+  repayClean3y         Boolean?
+  isWarning            Boolean
+  isSettledThisYear    Boolean
+  isNewWithin1y        Boolean
+  lastOnsiteDate       DateTime?
+  expectedOnsiteCount  Int?
+  expectedOffsiteCount Int?
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+}
+
+model Group {
+  id          String @id
+  name        String
+  memberCount Int
+}
+
+model Person {
+  id                 String   @id
+  name               String
+  baseCity           String   @default("深圳")
+  dept               String
+  specialTags        Json
+  longTermGroupIds   Json
+  longTermProjectIds Json
+  isActive           Boolean  @default(true)
+  activeFrom         DateTime?
+}
+
+model RuleSet {
+  id          String     @id
+  version     String
+  effectiveAt DateTime
+  status      RuleStatus
+  createdBy   String
+  createdAt   DateTime   @default(now())
+  sourceNote  String
+  rules       Rule[]
+}
+
+model Rule {
+  id        String  @id
+  rulesetId String
+  ruleset   RuleSet @relation(fields: [rulesetId], references: [id])
+  group     String
+  priority  Int
+  name      String
+  when      Json
+  then      Json
+  type      String?
+  source    String
+  enabled   Boolean @default(true)
+}
+
+model ProjectSnapshot {
+  id        String   @id
+  batchId   String
+  projectId String
+  payload   Json
+  createdAt DateTime @default(now())
+}
+
+model SchedulingRun {
+  id               String    @id
+  runType          RunType
+  planPeriod       Json
+  rulesetVersion   String
+  inputSnapshotId  String
+  status           RunStatus
+  supersedes       String?
+  isNamed          Boolean   @default(false)
+  expiresAt        DateTime?
+  createdBy        String
+  createdAt        DateTime  @default(now())
+  publishedAt      DateTime?
+  tasks            Task[]
+  decisionLogs     DecisionLog[]
+  conflicts        Conflict[]
+}
+
+model Task {
+  id               String     @id
+  runId            String
+  run              SchedulingRun @relation(fields: [runId], references: [id])
+  projectId        String
+  checkType        CheckType
+  occurrenceIndex  Int
+  occurrenceTotal  Int
+  assigneeId       String?
+  scheduledDate    DateTime?
+  durationDays     Int        @default(5)
+  endDate          DateTime?
+  dateBasis        String
+  slotSource       String
+  status           TaskStatus
+  actualCompletedAt DateTime?
+  reportRef        String?
+  isPlaced         Boolean
+}
+
+model DecisionLog {
+  id        String   @id
+  runId     String
+  run       SchedulingRun @relation(fields: [runId], references: [id])
+  projectId String
+  taskId    String?
+  step      String
+  ruleHit   String?
+  ruleText  String
+  inputs    Json
+  output    Json
+  result    String
+  reason    String
+  override  Json?
+  chainPrev String?
+  chainNext String?
+  createdAt DateTime @default(now())
+}
+
+model Conflict {
+  id         String   @id
+  runId      String
+  run        SchedulingRun @relation(fields: [runId], references: [id])
+  taskIds    Json
+  kind       String
+  severity   String
+  message    String
+  status     String
+  resolution Json?
+}
+
+model HolidayCalendar {
+  id             String @id
+  year           Int
+  holidays       Json
+  makeUpWorkdays Json
+}
+
+model ImportBatch {
+  id        String   @id
+  filename  String
+  rowCount   Int
+  createdBy String
+  createdAt DateTime @default(now())
+}
+
+model PlanningYearWorkspace {
+  year             Int      @id
+  periodLabel      String
+  activeSnapshotId String?
+  currentRunId     String?
+  canGenerateSandbox  Boolean @default(false)
+  canGenerateOfficial Boolean @default(false)
+  readiness        Json
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+}
+
+model ProjectInputBatch {
+  id                   String   @id
+  year                 Int
+  filename             String
+  source               String
+  status               String
+  worksheetRows        Int
+  dataRows             Int
+  normalizedRows       Int
+  importedBy           String
+  importedAt           DateTime
+  onsiteExpectedTotal  Int
+  offsiteExpectedTotal Int
+}
+
+model ProjectChangeSet {
+  id                 String    @id
+  year               Int
+  baseSnapshotId     String?
+  importBatchId      String
+  added              Int
+  changed            Int
+  removed            Int
+  duplicateSuspects  Int
+  reviewed           Boolean   @default(false)
+  frozenAt           DateTime?
+  snapshotId         String?
+  items              Json
+  issues             Json
+}
+
+model RosterVersion {
+  id            String    @id
+  year          Int
+  version       String
+  status        String
+  poolMode      String
+  activePeople  Int
+  totalPeople   Int
+  effectiveFrom DateTime
+  effectiveTo   DateTime
+  confirmedBy   String?
+  confirmedAt   DateTime?
+  issues        Json
+}

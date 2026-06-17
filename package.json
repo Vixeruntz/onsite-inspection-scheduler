@@ -1,0 +1,31 @@
+{
+  "name": "onsite-inspection-scheduler",
+  "version": "1.0.0",
+  "private": true,
+  "packageManager": "pnpm@9.15.4",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "npm run dev --workspace @inspection/web",
+    "dev:web": "npm run dev --workspace @inspection/web",
+    "dev:api": "npm run dev --workspace @inspection/api",
+    "start:web": "npm run start --workspace @inspection/web",
+    "start:api": "npm run start --workspace @inspection/api",
+    "build": "npm run build --workspaces --if-present",
+    "test": "vitest run",
+    "typecheck": "tsc -b tsconfig.json",
+    "seed:sample": "tsx scripts/seed-sample.ts",
+    "verify:runtime": "tsx scripts/verify-runtime.ts",
+    "test:acceptance": "tsx scripts/acceptance-e2e.ts",
+    "test:live-e2e": "tsx scripts/live-e2e.ts",
+    "data:test": "tsx scripts/create-test-data.ts"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2",
+    "vitest": "^2.1.8"
+  }
+}
