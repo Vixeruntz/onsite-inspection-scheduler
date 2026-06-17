@@ -45,6 +45,23 @@ apps/web/.next
 
 根目录的 `vercel.json` 已包含 Vercel 构建配置，也可作为其他平台识别项目结构的参考。
 
+## Cloudflare 部署说明
+
+当前项目已配置 Cloudflare OpenNext 适配器，可部署为 Cloudflare Worker：
+
+```bash
+npm install
+npm run cf:build --workspace @inspection/web
+npm run cf:deploy --workspace @inspection/web
+```
+
+相关配置文件：
+
+- `apps/web/open-next.config.ts`
+- `apps/web/wrangler.toml`
+
+注意：普通 `workers.dev` 或 Cloudflare 全球网络部署不等同于中国内地生产可用。若目标用户主要在中国内地，需要使用自有域名，并按 Cloudflare China Network 要求完成 ICP 备案/许可证、域名接入和中国网络开通。未开通 China Network 前，只能作为全球访问或临时演示入口。
+
 生产模式可用 `PORT` 覆盖端口：
 
 ```bash
