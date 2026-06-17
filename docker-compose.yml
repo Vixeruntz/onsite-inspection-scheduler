@@ -1,0 +1,14 @@
+services:
+  onsite-inspection-scheduler:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: onsite-inspection-scheduler
+    environment:
+      NODE_ENV: production
+      PORT: "3000"
+      HOSTNAME: 0.0.0.0
+      NEXT_TELEMETRY_DISABLED: "1"
+    ports:
+      - "3000:3000"
+    restart: unless-stopped
