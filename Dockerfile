@@ -30,6 +30,8 @@ ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED=1
 ENV HOSTNAME=0.0.0.0
 ENV PORT=3000
+ENV NEXT_PUBLIC_API_BASE_URL=/api/backend
+ENV API_BASE_URL=http://127.0.0.1:3000/api/backend
 
 COPY --from=builder /app ./
 

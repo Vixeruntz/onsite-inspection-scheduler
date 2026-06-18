@@ -12,6 +12,17 @@ const noStore = { "Cache-Control": "no-store" };
 
 const json = (payload: unknown, status = 200) => Response.json(payload, { status, headers: noStore });
 
+const assertAdminToken = (request: Request) => {
+  const expected = process.env.WORKSPACE_ADMIN_TOKEN?.trim();
+  const provided =
+    request.headers.get("x-workspace-admin-token")?.trim() ||
+    request.headers.get("authorization")?.replace(/^Bearer\s+/i, "").trim();
+  if (!expected || provided !== expected) {
+    return json({ error: "工作区快照接口未授权" }, 401);
+  }
+  return null;
+};
+
 const jsonError = (error: unknown) => {
   const maybeHttpError = error as {
     getStatus?: () => number;
@@ -40,6 +51,11 @@ const handleGet = async (request: Request, segments: string[]) => {
   const service = workspaceService();
   const url = new URL(request.url);
 
+  if (segments.join("/") === "admin/workspace-snapshot") {
+    const unauthorized = assertAdminToken(request);
+    if (unauthorized) return unauthorized;
+    return json(service.workspaceSnapshot());
+  }
   if (segments[0] === "workspace" && segments.length === 1) return json(service.summary());
   if (segments[0] === "tags" && segments.length === 1) return json(service.tags(url.searchParams.get("scope") as TagScope | undefined));
   if (segments[0] === "tags" && segments[1] === "taxonomy") return json(service.tagTaxonomy(url.searchParams.get("scope") as TagScope | undefined));
@@ -62,6 +78,11 @@ const handleGet = async (request: Request, segments: string[]) => {
 const handlePost = async (request: Request, segments: string[]) => {
   const service = workspaceService();
 
+  if (segments.join("/") === "admin/workspace-snapshot/restore") {
+    const unauthorized = assertAdminToken(request);
+    if (unauthorized) return unauthorized;
+    return json(service.restoreWorkspaceSnapshot(await readJson<ReturnType<typeof service.workspaceSnapshot>>(request)));
+  }
   if (segments[0] === "tags" && segments.length === 1) return json(service.createTag(await readJson<Partial<TagDefinition>>(request)));
   if (segments[0] === "rules" && segments[1] === "pending-decisions" && segments[3] === "what-if") return json(service.simulateRuleDecision(segments[2] ?? ""));
   if (segments[0] === "rules" && segments[1] === "pending-decisions" && segments[3] === "submit") return json(service.submitRuleDecision(segments[2] ?? ""));
@@ -91,6 +112,9 @@ const handlePost = async (request: Request, segments: string[]) => {
   if (segments[0] === "projects" && segments.length === 1) return json(service.createProject(await readJson<Partial<Project>>(request)));
   if (segments.join("/") === "projects/bulk-tags") return json(service.bulkProjectTags(await readJson<{ projectIds: string[]; tagIds: string[]; mode: "add" | "remove" }>(request)));
   if (segments.join("/") === "projects/bulk-delete") return json(service.bulkDeleteProjects(await readJson<{ projectIds: string[] }>(request)));
+  if (segments.join("/") === "projects/bulk-update-energy-fields") {
+    return json(service.bulkUpdateEnergyFields(await readJson<{ projectIds: string[]; updates: Record<string, unknown>; reason?: string }>(request)));
+  }
   if (segments[0] === "people" && segments.length === 1) return json(service.createPerson(await readJson<Partial<Person>>(request)));
   if (segments.join("/") === "people/bulk-tags") return json(service.bulkPersonTags(await readJson<{ personIds: string[]; tagIds: string[]; mode: "add" | "remove" }>(request)));
   if (segments.join("/") === "runs/generate") {
@@ -153,4 +177,3 @@ export const PATCH = async (request: Request, context: RouteContext) => {
     return jsonError(error);
   }
 };
-
