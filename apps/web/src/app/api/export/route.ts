@@ -1,7 +1,6 @@
 import { runToWorkbook } from "@inspection/scheduler";
 import type { Project, SchedulingRun } from "@inspection/domain";
 import * as XLSX from "xlsx";
-import { workspaceService } from "../backend/workspace-runtime.js";
 
 export const dynamic = "force-dynamic";
 
@@ -13,7 +12,7 @@ type WorkspaceExportSummary = {
   officialRuns?: SchedulingRun[];
 };
 
-const apiBase = process.env.API_BASE_URL ?? process.env.NEXT_PUBLIC_API_BASE_URL;
+const apiBase = process.env.API_BASE_URL ?? process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:4000";
 
 const jsonError = (message: string, status: number) =>
   Response.json({ error: message }, { status, headers: { "Cache-Control": "no-store" } });
@@ -42,16 +41,12 @@ const pickRun = (workspace: WorkspaceExportSummary, requestedRunId: string | nul
 
 export const GET = async (request: Request) => {
   let workspace: WorkspaceExportSummary;
-  if (apiBase) {
-    try {
-      const response = await fetch(`${apiBase.replace(/\/$/, "")}/workspace`, { cache: "no-store" });
-      if (!response.ok) return jsonError("后台数据不可用，无法导出当前方案", 503);
-      workspace = await response.json() as WorkspaceExportSummary;
-    } catch {
-      return jsonError("后台数据不可用，无法导出当前方案", 503);
-    }
-  } else {
-    workspace = workspaceService().summary() as WorkspaceExportSummary;
+  try {
+    const response = await fetch(`${apiBase.replace(/\/$/, "")}/workspace`, { cache: "no-store" });
+    if (!response.ok) return jsonError("后台数据不可用，无法导出当前方案", 503);
+    workspace = await response.json() as WorkspaceExportSummary;
+  } catch {
+    return jsonError("后台数据不可用，无法导出当前方案", 503);
   }
 
   const requestedRunId = new URL(request.url).searchParams.get("runId");

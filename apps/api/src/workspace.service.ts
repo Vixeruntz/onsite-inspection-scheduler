@@ -1,3 +1,5 @@
+import * as fs from "node:fs";
+import * as path from "node:path";
 import { BadRequestException } from "@nestjs/common";
 import type {
   AssigneePoolMode,
@@ -50,6 +52,44 @@ import {
   validateTagLibrary
 } from "@inspection/scheduler";
 
+type EnergyFieldKey = "gridConnected" | "accountMonitored" | "repayClean3y";
+type EnergyFieldUpdates = Partial<Record<EnergyFieldKey, boolean>>;
+
+const energyFieldKeys: EnergyFieldKey[] = ["gridConnected", "accountMonitored", "repayClean3y"];
+const energyFieldLabels: Record<EnergyFieldKey, string> = {
+  gridConnected: "并网情况",
+  accountMonitored: "账户监管",
+  repayClean3y: "近三年还款正常"
+};
+
+const cloneJson = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T;
+
+type WorkspaceSnapshot = {
+  schemaVersion: 1;
+  exportedAt: string;
+  workspace: ReturnType<typeof createFiftyProjectWorkspace>;
+  projectBatch: {
+    filename: string;
+    dataRows: number;
+    worksheetRows: number;
+    expectedOnsiteTotal: number;
+    expectedOffsiteTotal: number;
+  };
+  controls: {
+    projectFrozen: boolean;
+    rosterConfirmed: boolean;
+    snapshotVersion: number;
+    rosterVersionNumber: number;
+  };
+  tagLibrary: TagDefinition[];
+  publishedRuleSet: RuleSet;
+  ruleValidationRun: SchedulingRun | null;
+  ruleDrafts: RuleDecisionDraft[];
+  latestRuleSimulation: RuleSimulationResult | null;
+  latestRuleSuggestionBatch: RuleSuggestionBatch | null;
+  runs: SchedulingRun[];
+};
+
 export class WorkspaceService {
   private workspace = createFiftyProjectWorkspace();
   private projectBatchFilename = this.workspace.planningYear.projectBatch.filename;
@@ -71,6 +111,97 @@ export class WorkspaceService {
     [this.workspace.currentRun.id, this.workspace.currentRun],
     [this.workspace.asset7Run.id, this.workspace.asset7Run]
   ]);
+  private readonly statePath = process.env.WORKSPACE_STATE_PATH?.trim() || null;
+
+  constructor() {
+    this.loadPersistedState();
+  }
+
+  workspaceSnapshot(): WorkspaceSnapshot {
+    return {
+      schemaVersion: 1,
+      exportedAt: new Date().toISOString(),
+      workspace: cloneJson(this.workspace),
+      projectBatch: {
+        filename: this.projectBatchFilename,
+        dataRows: this.projectBatchDataRows,
+        worksheetRows: this.projectBatchWorksheetRows,
+        expectedOnsiteTotal: this.projectBatchExpectedOnsiteTotal,
+        expectedOffsiteTotal: this.projectBatchExpectedOffsiteTotal
+      },
+      controls: {
+        projectFrozen: this.projectFrozen,
+        rosterConfirmed: this.rosterConfirmed,
+        snapshotVersion: this.snapshotVersion,
+        rosterVersionNumber: this.rosterVersionNumber
+      },
+      tagLibrary: cloneJson(this.tagLibrary),
+      publishedRuleSet: cloneJson(this.publishedRuleSet),
+      ruleValidationRun: cloneJson(this.ruleValidationRun),
+      ruleDrafts: cloneJson(this.listRuleDrafts()),
+      latestRuleSimulation: cloneJson(this.latestRuleSimulation),
+      latestRuleSuggestionBatch: cloneJson(this.latestRuleSuggestionBatch),
+      runs: cloneJson(this.listRuns())
+    };
+  }
+
+  restoreWorkspaceSnapshot(snapshot: WorkspaceSnapshot) {
+    this.applyWorkspaceSnapshot(snapshot);
+    this.persistState();
+    return {
+      restoredAt: new Date().toISOString(),
+      projects: this.workspace.projects.length,
+      people: this.workspace.people.length,
+      officialRuns: this.listRuns("official").length,
+      archivedRuns: this.listRuns("official").filter((run) => run.status === "archived").length,
+      currentRunId: this.workspace.currentRun.id,
+      publishCandidateRunId: this.publishCandidateRun().id
+    };
+  }
+
+  private loadPersistedState() {
+    if (!this.statePath || !fs.existsSync(this.statePath)) return;
+    try {
+      this.applyWorkspaceSnapshot(JSON.parse(fs.readFileSync(this.statePath, "utf8")) as WorkspaceSnapshot);
+    } catch (error) {
+      throw new Error(`无法读取工作区持久化快照 ${this.statePath}: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+
+  private applyWorkspaceSnapshot(snapshot: WorkspaceSnapshot) {
+    if (snapshot?.schemaVersion !== 1 || !snapshot.workspace || !Array.isArray(snapshot.runs)) {
+      throw new BadRequestException("工作区快照格式不正确");
+    }
+    this.workspace = snapshot.workspace;
+    this.projectBatchFilename = snapshot.projectBatch.filename;
+    this.projectBatchDataRows = snapshot.projectBatch.dataRows;
+    this.projectBatchWorksheetRows = snapshot.projectBatch.worksheetRows;
+    this.projectBatchExpectedOnsiteTotal = snapshot.projectBatch.expectedOnsiteTotal;
+    this.projectBatchExpectedOffsiteTotal = snapshot.projectBatch.expectedOffsiteTotal;
+    this.projectFrozen = snapshot.controls.projectFrozen;
+    this.rosterConfirmed = snapshot.controls.rosterConfirmed;
+    this.snapshotVersion = snapshot.controls.snapshotVersion;
+    this.rosterVersionNumber = snapshot.controls.rosterVersionNumber;
+    this.tagLibrary = snapshot.tagLibrary;
+    this.publishedRuleSet = snapshot.publishedRuleSet;
+    this.ruleValidationRun = snapshot.ruleValidationRun;
+    this.ruleDrafts = new Map(snapshot.ruleDrafts.map((draft) => [draft.technicalRuleId, draft]));
+    this.latestRuleSimulation = snapshot.latestRuleSimulation;
+    this.latestRuleSuggestionBatch = snapshot.latestRuleSuggestionBatch;
+    this.runs = new Map(snapshot.runs.map((run) => [run.id, run]));
+    for (const run of [this.workspace.currentRun, this.workspace.asset7Run, this.ruleValidationRun].filter((item): item is SchedulingRun => Boolean(item))) {
+      this.runs.set(run.id, run);
+    }
+  }
+
+  private persistState() {
+    if (!this.statePath) return;
+    const targetDir = path.dirname(this.statePath);
+    fs.mkdirSync(targetDir, { recursive: true });
+    const tmpPath = `${this.statePath}.${process.pid}.${Date.now()}.tmp`;
+    fs.writeFileSync(tmpPath, `${JSON.stringify(this.workspaceSnapshot(), null, 2)}\n`);
+    fs.renameSync(tmpPath, this.statePath);
+  }
 
   private normalizeUploadedFilename(filename: string) {
     return /[Ããïæèäçå¼½]/.test(filename) ? Buffer.from(filename, "latin1").toString("utf8") : filename;
@@ -97,6 +228,30 @@ export class WorkspaceService {
 
   private publishCandidateRun() {
     return this.ruleValidationRun ?? this.workspace.currentRun;
+  }
+
+  private isEnergyExemptionScope(project: Project) {
+    return project.industry === "energy" && project.exposureBalance <= 300_000_000;
+  }
+
+  private needsEnergyExemptionReview(project: Project) {
+    return this.isEnergyExemptionScope(project) && energyFieldKeys.some((key) => project[key] === null);
+  }
+
+  private satisfiesEnergyExemption(project: Project) {
+    return (
+      this.isEnergyExemptionScope(project) &&
+      project.gridConnected === true &&
+      project.repayClean3y === true &&
+      (project.accountMonitored === true || project.realtimeMonitored === true)
+    );
+  }
+
+  private energyExemptionSummary(projects = this.workspace.projects) {
+    return {
+      pendingEnergyProjects: projects.filter((project) => this.needsEnergyExemptionReview(project)).length,
+      r5ExemptedProjects: projects.filter((project) => this.satisfiesEnergyExemption(project)).length
+    };
   }
 
   summary() {
@@ -344,6 +499,7 @@ export class WorkspaceService {
       now
     );
     this.ruleDrafts.set(technicalRuleId, draft);
+    this.persistState();
     return draft;
   }
 
@@ -360,6 +516,7 @@ export class WorkspaceService {
       this.ruleDrafts.set(draft.technicalRuleId, draft);
     }
     this.latestRuleSuggestionBatch = result.batch;
+    this.persistState();
     return result.batch;
   }
 
@@ -387,6 +544,7 @@ export class WorkspaceService {
     this.ruleDrafts.set(technicalRuleId, updatedDraft);
     const result = this.createSimulationResult(`pending-${technicalRuleId}`, technicalRuleId, run);
     this.latestRuleSimulation = result;
+    this.persistState();
     return result;
   }
 
@@ -606,6 +764,75 @@ export class WorkspaceService {
     return this.workspace.projects.filter((project) => ids.has(project.id));
   }
 
+  bulkUpdateEnergyFields(body: { projectIds: string[]; updates: Record<string, unknown>; reason?: string }) {
+    const requestedIds = [...new Set((body.projectIds ?? []).filter((id): id is string => typeof id === "string" && id.trim().length > 0).map((id) => id.trim()))];
+    if (!requestedIds.length) throw new BadRequestException("请选择需要批量确认的能源环保项目");
+
+    const rawUpdates = body.updates ?? {};
+    const invalidKeys = Object.keys(rawUpdates).filter((key) => !energyFieldKeys.includes(key as EnergyFieldKey));
+    if (invalidKeys.length) throw new BadRequestException(`仅允许更新能源豁免三项字段：${energyFieldKeys.map((key) => energyFieldLabels[key]).join("、")}`);
+
+    const updates = Object.fromEntries(
+      energyFieldKeys
+        .filter((key) => Object.prototype.hasOwnProperty.call(rawUpdates, key))
+        .map((key) => {
+          const value = rawUpdates[key];
+          if (typeof value !== "boolean") throw new BadRequestException(`${energyFieldLabels[key]}只能填写是或否；保持不变请不要传该字段`);
+          return [key, value];
+        })
+    ) as EnergyFieldUpdates;
+    const changedFieldKeys = Object.keys(updates) as EnergyFieldKey[];
+    if (!changedFieldKeys.length) throw new BadRequestException("请选择至少一个需要确认的能源字段");
+
+    const requested = new Set(requestedIds);
+    const targetIds = this.workspace.projects.filter((project) => requested.has(project.id) && this.isEnergyExemptionScope(project)).map((project) => project.id);
+    if (!targetIds.length) throw new BadRequestException("所选项目中没有符合 R5 判断范围的能源环保项目");
+
+    const beforeSummary = this.energyExemptionSummary();
+    const targetIdSet = new Set(targetIds);
+    const tagLibrary = this.effectiveTagLibrary();
+    this.workspace.projects = this.workspace.projects.map((project) => {
+      if (!targetIdSet.has(project.id)) return project;
+      return syncProjectTags({ ...project, ...updates }, tagLibrary);
+    });
+    this.projectFrozen = false;
+
+    const validationRun = generateRun(
+      { year: this.workspace.planningYear.year, scope: "full_year" },
+      this.workspace.projects,
+      {
+        people: this.workspace.people,
+        assigneePoolMode: this.workspace.planningYear.rosterVersion.poolMode,
+        runType: "what_if",
+        ruleset: this.publishedRuleSet,
+        now: new Date().toISOString()
+      }
+    );
+    this.runs.set(validationRun.id, validationRun);
+    this.ruleValidationRun = validationRun;
+    this.latestRuleSimulation = null;
+    this.latestRuleSuggestionBatch = null;
+    this.resyncTags();
+
+    const afterSummary = this.energyExemptionSummary();
+    const updatedProjects = this.workspace.projects.filter((project) => targetIdSet.has(project.id));
+
+    return {
+      updatedCount: updatedProjects.length,
+      updatedProjectIds: updatedProjects.map((project) => project.id),
+      fieldChanges: changedFieldKeys.map((key) => ({
+        field: key,
+        label: energyFieldLabels[key],
+        value: updates[key]
+      })),
+      beforeSummary,
+      afterSummary,
+      r5CandidateProjectIds: updatedProjects.filter((project) => this.satisfiesEnergyExemption(project)).map((project) => project.id),
+      stillPendingProjectIds: this.workspace.projects.filter((project) => this.needsEnergyExemptionReview(project)).map((project) => project.id),
+      reason: body.reason?.trim() || "导入后批量确认能源豁免条件"
+    };
+  }
+
   bulkDeleteProjects(body: { projectIds: string[] }) {
     const requestedIds = [...new Set((body.projectIds ?? []).filter((id): id is string => typeof id === "string" && id.trim().length > 0).map((id) => id.trim()))];
     if (!requestedIds.length) throw new BadRequestException("请选择需要移出项目池的项目");
@@ -820,6 +1047,7 @@ export class WorkspaceService {
     const next: SchedulingRun = { ...run, tasks: nextTasks };
     this.runs.set(id, next);
     if (this.workspace.currentRun.id === id) this.workspace.currentRun = next;
+    this.persistState();
     return next;
   }
 
@@ -843,6 +1071,7 @@ export class WorkspaceService {
         : overridden;
     this.runs.set(id, next);
     if (this.workspace.currentRun.id === id) this.workspace.currentRun = next;
+    this.persistState();
     return next;
   }
 
@@ -908,6 +1137,7 @@ export class WorkspaceService {
       rosterVersionNumber: this.rosterVersionNumber,
       now: new Date().toISOString()
     });
+    this.persistState();
   }
 
   private requireRun(id: string) {

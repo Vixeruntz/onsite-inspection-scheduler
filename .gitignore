@@ -15,6 +15,7 @@ tmp
 .DS_Store
 .claude
 logs
+backups
 *.log
 *.docx
 *.xlsx

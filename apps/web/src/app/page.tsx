@@ -1114,6 +1114,42 @@ type ProjectSchedulingReadiness = {
   canFreeze: boolean;
 };
 
+type EnergyFieldKey = "gridConnected" | "accountMonitored" | "repayClean3y";
+type EnergyMissingFilter = "any" | EnergyFieldKey;
+type EnergyBulkValue = "keep" | "true" | "false";
+
+const energyFieldKeys: EnergyFieldKey[] = ["gridConnected", "accountMonitored", "repayClean3y"];
+const energyFieldLabels: Record<EnergyFieldKey, string> = {
+  gridConnected: "并网情况",
+  accountMonitored: "账户监管",
+  repayClean3y: "近三年还款正常"
+};
+const energyFilterLabels: Record<EnergyMissingFilter, string> = {
+  any: "三项任一缺失",
+  gridConnected: "缺并网情况",
+  accountMonitored: "缺账户监管",
+  repayClean3y: "缺近三年还款正常"
+};
+
+const energyBooleanLabel = (value: boolean | null | undefined) => (value === null || value === undefined ? "待确认" : value ? "是" : "否");
+const isEnergyR5ScopeProject = (project: Project) => project.industry === "energy" && project.exposureBalance <= 300_000_000;
+const energyFieldMissing = (project: Project, field: EnergyFieldKey) => project[field] === null;
+const needsEnergyExemptionReview = (project: Project) => isEnergyR5ScopeProject(project) && energyFieldKeys.some((field) => energyFieldMissing(project, field));
+const satisfiesEnergyExemption = (project: Project) =>
+  isEnergyR5ScopeProject(project) &&
+  project.gridConnected === true &&
+  project.repayClean3y === true &&
+  (project.accountMonitored === true || project.realtimeMonitored === true);
+
+const applyEnergyPreviewUpdates = (project: Project, values: Record<EnergyFieldKey, EnergyBulkValue>) => {
+  const patch = Object.fromEntries(
+    energyFieldKeys
+      .filter((field) => values[field] !== "keep")
+      .map((field) => [field, values[field] === "true"])
+  ) as Partial<Pick<Project, EnergyFieldKey>>;
+  return { ...project, ...patch };
+};
+
 const projectSchedulingReadiness = (project: Project): ProjectSchedulingReadiness => {
   const fieldRequirements = getProjectFieldRequirements(project);
   const missingFields = fieldRequirements.map((item) => item.label);
@@ -2010,6 +2046,227 @@ function TagSelector({
   );
 }
 
+function ProjectHandlingDrawer({
+  open,
+  project,
+  people,
+  readiness,
+  ruleImpacts,
+  activeRequirement,
+  activeSection,
+  validationMessage,
+  onClose,
+  onSave,
+  onSaveAndValidate,
+  onUpdate,
+  onFocusRequirement,
+  onSectionToggle,
+  setFieldRef,
+  isSectionOpen,
+  isFieldHighlighted,
+  sectionRequirement
+}: {
+  open: boolean;
+  project: Project | null;
+  people: Person[];
+  readiness: ProjectSchedulingReadiness | null;
+  ruleImpacts: PublishIssue[];
+  activeRequirement: ProjectFieldRequirement | null;
+  activeSection: ProjectFieldSection | null;
+  validationMessage: string;
+  onClose: () => void;
+  onSave: () => void | Promise<void>;
+  onSaveAndValidate: () => void | Promise<void>;
+  onUpdate: (patch: Partial<Project>) => void;
+  onFocusRequirement: (requirement: ProjectFieldRequirement) => void;
+  onSectionToggle: (section: ProjectFieldSection, open: boolean) => void;
+  setFieldRef: (fieldName: string) => (node: HTMLElement | null) => void;
+  isSectionOpen: (section: ProjectFieldSection) => boolean;
+  isFieldHighlighted: (fieldName: string) => boolean;
+  sectionRequirement: (section: ProjectFieldSection) => ProjectFieldRequirement | null;
+}) {
+  useEffect(() => {
+    if (!open) return;
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") onClose();
+    };
+    const originalOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.body.style.overflow = originalOverflow;
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [open, onClose]);
+
+  if (!open || !project || !readiness) return null;
+  const statusClass = readiness.status === "ready" ? "success-chip" : readiness.status === "missing_fields" ? "danger-chip" : "";
+
+  return (
+    <div className="project-drawer-layer">
+      <button className="project-drawer-backdrop" aria-label="关闭项目维护抽屉" onClick={onClose} type="button" />
+      <aside className="project-handling-drawer" aria-label={`正在维护：${project.name || "未命名项目"}`} aria-modal="true" role="dialog">
+        <header className="project-drawer-header">
+          <div>
+            <span>项目维护 · {readiness.statusLabel}</span>
+            <h2>{project.name || "未命名项目"}</h2>
+            <p>项目编号 {project.id}｜{project.groupName ?? "无归属集团"}｜{project.dept || "业务部门待补"}</p>
+          </div>
+          <div className="inline-actions">
+            <button className="button primary" onClick={onSaveAndValidate} type="button">保存并校验</button>
+            <button className="button" onClick={onSave} type="button">保存</button>
+            <button className="button" onClick={onClose} type="button">收起</button>
+          </div>
+        </header>
+        <div className="project-drawer-summary">
+          <span className={`chip ${statusClass}`}>{readiness.statusLabel}</span>
+          <span className="chip">字段：{readiness.completenessLabel}</span>
+          <span className="chip">频次依据：{readiness.frequencyBasis}</span>
+          <span className="chip">现场 {project.onsiteMaintainerName ?? "待维护"} / 非现场 {project.offsiteMaintainerName ?? "待维护"}</span>
+        </div>
+        <div className="project-drawer-body">
+          <div className="project-editor-summary">
+            <div className="project-editor-title">
+              <span className={`chip ${statusClass}`}>{readiness.statusLabel}</span>
+              <strong>{project.name || "未命名项目"}</strong>
+              <p>{project.groupName ?? "无归属集团"} · {project.dept || "业务部门待补"} · {labelMaps.customerType[project.customerType]} · {labelMaps.bizType[project.bizType]}</p>
+            </div>
+            <div className="project-editor-facts">
+              <div><span>检查对象</span><strong>{labelMaps.partyType[project.partyType]}</strong></div>
+              <div><span>风险敞口</span><strong>{(project.exposureBalance / 100_000_000).toFixed(2)} 亿</strong></div>
+              <div><span>频次依据</span><strong>{readiness.frequencyBasis}</strong></div>
+              <div><span>责任人</span><strong>现场 {project.onsiteMaintainerName ?? "待维护"} / 非现场 {project.offsiteMaintainerName ?? "待维护"}</strong></div>
+            </div>
+          </div>
+          {validationMessage ? <div className="action-message success">{validationMessage}</div> : null}
+          {readiness.missingFields.length ? (
+            <div className="requirement-guide">
+              <div>
+                <strong>本项目还差哪些必要信息</strong>
+                <p>{activeRequirement?.reason ?? "按待补内容补齐后即可重新校验。"}</p>
+              </div>
+              <div className="chips editor-alert-chips">
+                {readiness.fieldRequirements.map((item) => (
+                  <button className={`chip chip-button danger-chip ${activeRequirement?.key === item.key ? "active" : ""}`} type="button" key={item.key} onClick={() => onFocusRequirement(item)} title={item.reason}>
+                    {item.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+          ) : (
+            <div className="requirement-guide success">
+              <div>
+                <strong>项目字段完整</strong>
+                <p>本项目已经满足排期规则需要的项目字段。</p>
+              </div>
+            </div>
+          )}
+          {ruleImpacts.length ? (
+            <div className="requirement-guide">
+              <div>
+                <strong>规则影响</strong>
+                <p>项目字段完整，后续由规则维护处理。</p>
+              </div>
+              <div className="chips editor-alert-chips">
+                {ruleImpacts.map((issue) => (
+                  <a className="chip chip-link warning-chip" href={viewHref("rulesInput", { rule: issue.technicalRuleId ?? undefined, project: project.id, panel: "draft" })} key={issue.id}>
+                    命中 {issue.technicalRuleId} · 待规则确认
+                  </a>
+                ))}
+              </div>
+            </div>
+          ) : null}
+          <div className="editor-grid project-editor-grid">
+            <div className="policy-editor-stack">
+              <details className={`policy-editor-section ${activeSection === "basic" ? "active-requirement-section" : ""}`} open={isSectionOpen("basic")} onToggle={(event) => onSectionToggle("basic", event.currentTarget.open)}>
+                <summary className="policy-editor-heading"><span>必要字段</span><strong>基础信息</strong></summary>
+                {sectionRequirement("basic") ? <p className="requirement-reason">{sectionRequirement("basic")?.reason}</p> : null}
+                <div className="form-grid">
+                  <label className={`field-label ${isFieldHighlighted("name") ? "field-label-missing" : ""}`}>项目名称<input ref={setFieldRef("name")} className="search" value={project.name} onChange={(event) => onUpdate({ name: event.target.value })} /></label>
+                  <label className={`field-label ${isFieldHighlighted("dept") ? "field-label-missing" : ""}`}>业务部门<input ref={setFieldRef("dept")} className="search" value={project.dept} onChange={(event) => onUpdate({ dept: event.target.value })} /></label>
+                  <label>归属集团编号<input className="search" value={project.groupId ?? ""} onChange={(event) => onUpdate({ groupId: event.target.value || null })} /></label>
+                  <label>归属集团名称<input className="search" value={project.groupName ?? ""} onChange={(event) => onUpdate({ groupName: event.target.value || null })} /></label>
+                  <label>检查对象<select className="select" value={project.partyType} onChange={(event) => onUpdate({ partyType: event.target.value as Project["partyType"] })}>{Object.entries(labelMaps.partyType).map(([value, label]) => <option value={value} key={value}>{label}</option>)}</select></label>
+                  <label>业务类型<select className="select" value={project.bizType} onChange={(event) => onUpdate({ bizType: event.target.value as Project["bizType"] })}>{Object.entries(labelMaps.bizType).map(([value, label]) => <option value={value} key={value}>{label}</option>)}</select></label>
+                </div>
+              </details>
+              <details className={`policy-editor-section ${activeSection === "scope" ? "active-requirement-section" : ""}`} open={isSectionOpen("scope")} onToggle={(event) => onSectionToggle("scope", event.currentTarget.open)}>
+                <summary className="policy-editor-heading"><span>规则字段</span><strong>入池判断</strong></summary>
+                {sectionRequirement("scope") ? <p className="requirement-reason">{sectionRequirement("scope")?.reason}</p> : null}
+                <div className="form-grid">
+                  <label>客户类型<select className="select" value={project.customerType} onChange={(event) => onUpdate({ customerType: event.target.value as Project["customerType"] })}>{Object.entries(labelMaps.customerType).map(([value, label]) => <option value={value} key={value}>{label}</option>)}</select></label>
+                  <label>风险分类<select className="select" value={project.riskGrade} onChange={(event) => onUpdate({ riskGrade: event.target.value as Project["riskGrade"], isNpl: ["substandard", "doubtful", "loss"].includes(event.target.value) })}>{Object.entries(labelMaps.riskGrade).map(([value, label]) => <option value={value} key={value}>{label}</option>)}</select></label>
+                  <label>风险敞口余额<input className="search" type="number" value={project.exposureBalance} onChange={(event) => onUpdate({ exposureBalance: Number(event.target.value) })} /></label>
+                  <label className={`field-label ${isFieldHighlighted("creditStart") ? "field-label-missing" : ""}`}>授信开始<input ref={setFieldRef("creditStart")} className="search" type="date" value={project.creditStart} onChange={(event) => onUpdate({ creditStart: event.target.value })} /></label>
+                  <label className={`field-label ${isFieldHighlighted("creditEnd") ? "field-label-missing" : ""}`}>授信结束<input ref={setFieldRef("creditEnd")} className="search" type="date" value={project.creditEnd} onChange={(event) => onUpdate({ creditEnd: event.target.value })} /></label>
+                  <label className="check-line"><input type="checkbox" checked={project.isSettledThisYear} onChange={(event) => onUpdate({ isSettledThisYear: event.target.checked })} />当年结清</label>
+                  <label className="check-line"><input type="checkbox" checked={project.isNewWithin1y} onChange={(event) => onUpdate({ isNewWithin1y: event.target.checked })} />当年新增且期限不超过1年</label>
+                  <label className="check-line"><input type="checkbox" checked={project.companySpecialRequirement ?? false} onChange={(event) => onUpdate({ companySpecialRequirement: event.target.checked })} />公司特殊要求</label>
+                </div>
+              </details>
+              <details className={`policy-editor-section ${activeSection === "frequency" ? "active-requirement-section" : ""}`} open={isSectionOpen("frequency")} onToggle={(event) => onSectionToggle("frequency", event.currentTarget.open)}>
+                <summary className="policy-editor-heading"><span>规则字段</span><strong>频次判断</strong></summary>
+                {sectionRequirement("frequency") ? <p className="requirement-reason">{sectionRequirement("frequency")?.reason}</p> : null}
+                <div className="form-grid">
+                  <label>行业<select className="select" value={project.industry} onChange={(event) => onUpdate({ industry: event.target.value as Project["industry"] })}>{Object.entries(labelMaps.industry).map(([value, label]) => <option value={value} key={value}>{label}</option>)}</select></label>
+                  <label className={`field-label ${isFieldHighlighted("hospitalType") ? "field-label-missing" : ""}`}>医院类型<select ref={setFieldRef("hospitalType")} className="select" value={project.hospitalType ?? ""} onChange={(event) => onUpdate({ hospitalType: event.target.value ? event.target.value as Project["hospitalType"] : null })}><option value="">非医院/待维护</option><option value="public_hospital">公立医院</option><option value="private_hospital">民营医院</option></select></label>
+                  <label>初始敞口<input className="search" type="number" value={project.exposureInit} onChange={(event) => onUpdate({ exposureInit: Number(event.target.value) })} /></label>
+                  <label className={`field-label ${isFieldHighlighted("termHalf") ? "field-label-missing" : ""}`}>项目中期<input ref={setFieldRef("termHalf")} className="search" type="date" value={project.termHalf ?? ""} onChange={(event) => onUpdate({ termHalf: event.target.value || null })} /></label>
+                  <label className={`field-label ${isFieldHighlighted("memberCount") ? "field-label-missing" : ""}`}>集团旗下存量客户数<input ref={setFieldRef("memberCount")} className="search" type="number" value={project.memberCount ?? ""} onChange={(event) => onUpdate({ memberCount: event.target.value === "" ? null : Number(event.target.value) })} /></label>
+                  <label className={`field-label ${isFieldHighlighted("relatedPartyStockCount") ? "field-label-missing" : ""}`}>担保人/母公司旗下存量客户数<input ref={setFieldRef("relatedPartyStockCount")} className="search" type="number" value={project.relatedPartyStockCount ?? ""} onChange={(event) => onUpdate({ relatedPartyStockCount: event.target.value === "" ? null : Number(event.target.value) })} /></label>
+                  <label className={`field-label ${isFieldHighlighted("gridConnected") ? "field-label-missing" : ""}`}>并网情况<select ref={setFieldRef("gridConnected")} className="select" value={project.gridConnected === null ? "" : String(project.gridConnected)} onChange={(event) => onUpdate({ gridConnected: event.target.value === "" ? null : event.target.value === "true" })}><option value="">待维护</option><option value="true">是</option><option value="false">否</option></select></label>
+                  <label className={`field-label ${isFieldHighlighted("accountMonitored") ? "field-label-missing" : ""}`}>账户监管<select ref={setFieldRef("accountMonitored")} className="select" value={project.accountMonitored === null ? "" : String(project.accountMonitored)} onChange={(event) => onUpdate({ accountMonitored: event.target.value === "" ? null : event.target.value === "true" })}><option value="">待维护</option><option value="true">是</option><option value="false">否</option></select></label>
+                  <label className={`field-label ${isFieldHighlighted("repayClean3y") ? "field-label-missing" : ""}`}>近三年还款正常<select ref={setFieldRef("repayClean3y")} className="select" value={project.repayClean3y === null ? "" : String(project.repayClean3y)} onChange={(event) => onUpdate({ repayClean3y: event.target.value === "" ? null : event.target.value === "true" })}><option value="">待维护</option><option value="true">是</option><option value="false">否</option></select></label>
+                  <label className="check-line"><input type="checkbox" checked={project.isWarning} onChange={(event) => onUpdate({ isWarning: event.target.checked })} />预警信号</label>
+                  <label className={`field-label ${isFieldHighlighted("warningPlan") ? "field-label-missing" : ""}`}>预警处理方案<input ref={setFieldRef("warningPlan")} className="search" value={project.warningPlan ?? ""} onChange={(event) => onUpdate({ warningPlan: event.target.value || null })} /></label>
+                  <label className={`wide-field field-label ${isFieldHighlighted("approvalRequirement") ? "field-label-missing" : ""}`}>批复/决议授信后管理要求<textarea ref={setFieldRef("approvalRequirement")} value={project.approvalRequirement ?? ""} onChange={(event) => onUpdate({ approvalRequirement: event.target.value || null })} /></label>
+                </div>
+              </details>
+              <details className={`policy-editor-section ${activeSection === "owner" ? "active-requirement-section" : ""}`} open={isSectionOpen("owner")} onToggle={(event) => onSectionToggle("owner", event.currentTarget.open)}>
+                <summary className="policy-editor-heading"><span>必要字段</span><strong>责任人</strong></summary>
+                {sectionRequirement("owner") ? <p className="requirement-reason">{sectionRequirement("owner")?.reason}</p> : null}
+                <div className="form-grid">
+                  <label className={`field-label ${isFieldHighlighted("primaryResponsibleDept") ? "field-label-missing" : ""}`}>主责口径<select ref={setFieldRef("primaryResponsibleDept")} className="select" value={project.primaryResponsibleDept ?? ""} onChange={(event) => onUpdate({ primaryResponsibleDept: event.target.value ? event.target.value as Project["primaryResponsibleDept"] : undefined })}><option value="">待选择</option>{projectResponsibilityOptions.map((option) => <option value={option.value} key={option.value}>{option.label}</option>)}</select></label>
+                  <label>现场维护人<select className="select" value={project.onsiteMaintainerId ?? ""} onChange={(event) => {
+                    const person = people.find((item) => item.id === event.target.value);
+                    onUpdate({ onsiteMaintainerId: event.target.value || null, onsiteMaintainerName: person?.name ?? null });
+                  }}><option value="">待维护</option>{people.map((person) => <option value={person.id} key={person.id}>{person.name}</option>)}</select></label>
+                  <label>非现场维护人<select className="select" value={project.offsiteMaintainerId ?? ""} onChange={(event) => {
+                    const person = people.find((item) => item.id === event.target.value);
+                    onUpdate({ offsiteMaintainerId: event.target.value || null, offsiteMaintainerName: person?.name ?? null });
+                  }}><option value="">待维护</option>{people.map((person) => <option value={person.id} key={person.id}>{person.name}</option>)}</select></label>
+                  <label>配合部门<input className="search" value={project.assistingDept ?? ""} onChange={(event) => onUpdate({ assistingDept: event.target.value || null })} /></label>
+                </div>
+              </details>
+              <details className="policy-editor-section">
+                <summary className="policy-editor-heading"><span>可选字段</span><strong>排期约束</strong></summary>
+                <div className="form-grid">
+                  <label>优先检查月份<input className="search" type="number" min={1} max={12} value={project.preferredInspectionMonth ?? ""} onChange={(event) => onUpdate({ preferredInspectionMonth: event.target.value === "" ? null : Number(event.target.value) })} /></label>
+                  <label>不可排月份<input className="search" value={(project.unavailableMonths ?? []).join(",")} onChange={(event) => onUpdate({ unavailableMonths: parseNumberList(event.target.value) })} /></label>
+                </div>
+                <div className="check-chip-grid">
+                  {offsiteChannelOptions.map((channel) => {
+                    const selected = project.offsiteInfoChannels?.includes(channel) ?? false;
+                    return (
+                      <label className="check-line compact" key={channel}>
+                        <input type="checkbox" checked={selected} onChange={(event) => {
+                          const current = project.offsiteInfoChannels ?? [];
+                          onUpdate({ offsiteInfoChannels: event.target.checked ? [...current, channel] : current.filter((item) => item !== channel) });
+                        }} />
+                        {channel}
+                      </label>
+                    );
+                  })}
+                </div>
+              </details>
+            </div>
+          </div>
+        </div>
+      </aside>
+    </div>
+  );
+}
+
 function ProjectInputView({
   planning,
   projects,
@@ -2055,17 +2312,29 @@ function ProjectInputView({
   const [query, setQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState<ProjectReadinessFilter>("all");
   const [draft, setDraft] = useState<Project | null>(null);
+  const [isProjectDrawerOpen, setIsProjectDrawerOpen] = useState(false);
   const [selectedProjectIds, setSelectedProjectIds] = useState<string[]>([]);
   const [isBulkDeleteConfirmOpen, setIsBulkDeleteConfirmOpen] = useState(false);
+  const [isEnergyWorkbenchOpen, setIsEnergyWorkbenchOpen] = useState(false);
+  const [energyFilter, setEnergyFilter] = useState<EnergyMissingFilter>("any");
+  const [selectedEnergyProjectIds, setSelectedEnergyProjectIds] = useState<string[]>([]);
+  const [energyBulkValues, setEnergyBulkValues] = useState<Record<EnergyFieldKey, EnergyBulkValue>>({
+    gridConnected: "keep",
+    accountMonitored: "keep",
+    repayClean3y: "keep"
+  });
   const [activeRequirementKey, setActiveRequirementKey] = useState<string | null>(null);
   const [activeRequirementRevealToken, setActiveRequirementRevealToken] = useState(0);
   const [validationMessage, setValidationMessage] = useState("");
   const [bulkDeleteMessage, setBulkDeleteMessage] = useState("");
+  const [energyBulkMessage, setEnergyBulkMessage] = useState("");
   const [openProjectSections, setOpenProjectSections] = useState<ProjectFieldSection[]>(coreProjectFieldSections);
   const [importMessage, setImportMessage] = useState("");
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const tableSectionRef = useRef<HTMLElement | null>(null);
+  const energyWorkbenchRef = useRef<HTMLElement | null>(null);
   const fieldRefs = useRef<Record<string, HTMLElement | null>>({});
+  const suppressedProjectRouteRef = useRef<string | null>(null);
   const readinessByProject = new Map(projects.map((project) => [project.id, projectSchedulingReadiness(project)]));
   const schedulingReadyProjects = projects.filter((project) => readinessByProject.get(project.id)?.status === "ready");
   const missingFieldProjects = projects.filter((project) => readinessByProject.get(project.id)?.status === "missing_fields");
@@ -2082,6 +2351,30 @@ function ProjectInputView({
   const selectedReadyCount = selectedProjects.filter((project) => readinessByProject.get(project.id)?.status === "ready").length;
   const selectedMissingFieldCount = selectedProjects.filter((project) => readinessByProject.get(project.id)?.status === "missing_fields").length;
   const selectedRuleImpactCount = selectedProjects.filter((project) => (ruleImpactsByProject.get(project.id) ?? []).length > 0).length;
+  const energyScopeProjects = projects.filter(isEnergyR5ScopeProject);
+  const energyPendingProjects = energyScopeProjects.filter(needsEnergyExemptionReview);
+  const energyRows = energyPendingProjects.filter((project) => (energyFilter === "any" ? true : energyFieldMissing(project, energyFilter)));
+  const energyRowIdSet = new Set(energyRows.map((project) => project.id));
+  const selectedEnergyIdSet = new Set(selectedEnergyProjectIds);
+  const selectedEnergyProjects = projects.filter((project) => selectedEnergyIdSet.has(project.id) && needsEnergyExemptionReview(project));
+  const selectedVisibleEnergyCount = energyRows.filter((project) => selectedEnergyIdSet.has(project.id)).length;
+  const allVisibleEnergySelected = energyRows.length > 0 && selectedVisibleEnergyCount === energyRows.length;
+  const previewEnergyProjects = selectedEnergyProjects.map((project) => applyEnergyPreviewUpdates(project, energyBulkValues));
+  const previewResolvedCount = previewEnergyProjects.filter((project) => !needsEnergyExemptionReview(project)).length;
+  const previewR5Count = previewEnergyProjects.filter(satisfiesEnergyExemption).length;
+  const previewStillPendingCount = previewEnergyProjects.filter(needsEnergyExemptionReview).length;
+  const energyUpdates = Object.fromEntries(
+    energyFieldKeys
+      .filter((field) => energyBulkValues[field] !== "keep")
+      .map((field) => [field, energyBulkValues[field] === "true"])
+  ) as Partial<Record<EnergyFieldKey, boolean>>;
+  const canSubmitEnergyBulk = selectedEnergyProjects.length > 0 && Object.keys(energyUpdates).length > 0;
+  const missingEnergyCounts = {
+    any: energyPendingProjects.length,
+    gridConnected: energyPendingProjects.filter((project) => energyFieldMissing(project, "gridConnected")).length,
+    accountMonitored: energyPendingProjects.filter((project) => energyFieldMissing(project, "accountMonitored")).length,
+    repayClean3y: energyPendingProjects.filter((project) => energyFieldMissing(project, "repayClean3y")).length
+  } satisfies Record<EnergyMissingFilter, number>;
 
   const updateDraft = (patch: Partial<Project>) => {
     if (!draft) return;
@@ -2090,12 +2383,15 @@ function ProjectInputView({
   const setFieldRef = (fieldName: string) => (node: HTMLElement | null) => {
     fieldRefs.current[fieldName] = node;
   };
+  const projectRouteKey = (projectId?: string | null, field?: string | null) => `${projectId ?? ""}:${field ?? ""}`;
   const openProjectEditor = (project: Project, requirementKey?: string | null) => {
+    suppressedProjectRouteRef.current = null;
     const fieldRequirements = getProjectFieldRequirements(project);
     const targetRequirement = requirementKey
       ? fieldRequirements.find((item) => item.key === requirementKey || item.fieldNames.includes(requirementKey)) ?? null
       : fieldRequirements[0] ?? null;
     setDraft(project);
+    setIsProjectDrawerOpen(true);
     setActiveRequirementKey(targetRequirement?.key ?? null);
     setOpenProjectSections(coreProjectFieldSections);
     if (requirementKey && targetRequirement) setActiveRequirementRevealToken((current) => current + 1);
@@ -2106,6 +2402,7 @@ function ProjectInputView({
   };
   useEffect(() => {
     if (!routeState.project) return;
+    if (suppressedProjectRouteRef.current === projectRouteKey(routeState.project, routeState.field)) return;
     const project = projects.find((item) => item.id === routeState.project);
     if (!project) return;
     openProjectEditor(project, routeState.field ?? null);
@@ -2113,6 +2410,10 @@ function ProjectInputView({
   useEffect(() => {
     const projectIds = new Set(projects.map((project) => project.id));
     setSelectedProjectIds((current) => {
+      const next = current.filter((id) => projectIds.has(id));
+      return next.length === current.length ? current : next;
+    });
+    setSelectedEnergyProjectIds((current) => {
       const next = current.filter((id) => projectIds.has(id));
       return next.length === current.length ? current : next;
     });
@@ -2140,6 +2441,7 @@ function ProjectInputView({
   const saveDraft = async () => {
     if (!draft) return;
     await request(`/projects/${draft.id}`, { method: "PATCH", body: JSON.stringify(draft) });
+    setIsProjectDrawerOpen(false);
     setDraft(null);
   };
   const saveDraftAndValidate = async () => {
@@ -2207,12 +2509,59 @@ function ProjectInputView({
       setSelectedProjectIds([]);
       setIsBulkDeleteConfirmOpen(false);
       setBulkDeleteMessage(`已移出 ${result.deletedCount} 个项目，项目池需重新冻结`);
-      if (draft && idSet.has(draft.id)) setDraft(null);
+      if (draft && idSet.has(draft.id)) {
+        setIsProjectDrawerOpen(false);
+        setDraft(null);
+      }
       if (typeof window !== "undefined" && routeState.project && idSet.has(routeState.project)) {
         window.history.pushState(null, "", viewHref("projectInput", { projectStatus: statusFilter, section: "projectTable" }));
       }
     } catch (error) {
       setBulkDeleteMessage(error instanceof Error ? readableApiError(error.message) : "批量移出失败，请稍后重试");
+    }
+  };
+  const openEnergyWorkbench = (filter: EnergyMissingFilter = "any") => {
+    setIsEnergyWorkbenchOpen(true);
+    setEnergyFilter(filter);
+    setStatusFilter("missing_fields");
+    setEnergyBulkMessage("");
+    if (typeof window !== "undefined") {
+      window.history.pushState(null, "", viewHref("projectInput", { projectStatus: "missing_fields", section: "projectTable" }));
+    }
+    window.setTimeout(() => scrollToSectionElement(energyWorkbenchRef.current), 0);
+  };
+  const toggleEnergySelection = (projectId: string, checked: boolean) => {
+    setSelectedEnergyProjectIds((current) => checked ? [...new Set([...current, projectId])] : current.filter((id) => id !== projectId));
+  };
+  const toggleVisibleEnergySelection = (checked: boolean) => {
+    setSelectedEnergyProjectIds((current) => checked
+      ? [...new Set([...current, ...energyRows.map((project) => project.id)])]
+      : current.filter((id) => !energyRowIdSet.has(id))
+    );
+  };
+  const submitEnergyBulkUpdate = async () => {
+    if (!canSubmitEnergyBulk) return;
+    try {
+      const result = await request<{
+        updatedCount: number;
+        afterSummary: { pendingEnergyProjects: number; r5ExemptedProjects: number };
+        r5CandidateProjectIds: string[];
+      }>("/projects/bulk-update-energy-fields", {
+        method: "POST",
+        body: JSON.stringify({
+          projectIds: selectedEnergyProjectIds,
+          updates: energyUpdates,
+          reason: "导入后批量确认能源豁免条件"
+        })
+      });
+      setEnergyBulkMessage(
+        `已确认 ${result.updatedCount} 个能源环保项目。当前仍待确认 ${result.afterSummary.pendingEnergyProjects} 个，预计命中 R5 免现场 ${result.afterSummary.r5ExemptedProjects} 个。`
+      );
+      setSelectedEnergyProjectIds([]);
+      setEnergyBulkValues({ gridConnected: "keep", accountMonitored: "keep", repayClean3y: "keep" });
+      setBulkDeleteMessage("能源豁免字段已更新，项目池需重新冻结");
+    } catch (error) {
+      setEnergyBulkMessage(error instanceof Error ? readableApiError(error.message) : "批量确认失败，请稍后重试");
     }
   };
 
@@ -2267,6 +2616,15 @@ function ProjectInputView({
       window.history.pushState(null, "", viewHref("projectInput", { projectStatus: filter, section: "projectTable" }));
     }
     scrollToSectionElement(tableSectionRef.current);
+  };
+  const closeProjectDrawer = () => {
+    suppressedProjectRouteRef.current = projectRouteKey(routeState.project ?? draft?.id, routeState.field);
+    setIsProjectDrawerOpen(false);
+    setDraft(null);
+    setValidationMessage("");
+    if (typeof window !== "undefined") {
+      window.history.pushState(null, "", viewHref("projectInput", { projectStatus: statusFilter, section: "projectTable" }));
+    }
   };
 
   useEffect(() => {
@@ -2335,10 +2693,199 @@ function ProjectInputView({
             <div><span>数据行数</span><strong>{planning.projectBatch.dataRows} 条</strong></div>
             <div><span>字段校验</span><strong>{missingFieldProjects.length ? `${missingFieldProjects.length} 个项目待补` : "已满足排期字段"}</strong></div>
           </div>
+          {energyScopeProjects.length ? (
+            <div className="energy-bulk-card">
+              <div className="section-title compact-section-title">
+                <div>
+                  <h3>能源环保字段待确认</h3>
+                  <span>并网情况、账户监管、近三年还款正常会影响 R5 是否免现场检查。</span>
+                </div>
+                <button className="button primary" type="button" disabled={!energyPendingProjects.length} onClick={() => openEnergyWorkbench("any")}>
+                  <Check size={15} />
+                  批量确认能源豁免条件
+                </button>
+              </div>
+              <div className="energy-metric-grid">
+                {([
+                  ["any", "待确认项目数", "查看全部能源环保待确认项目"],
+                  ["gridConnected", "并网情况缺失", "只看缺并网情况"],
+                  ["accountMonitored", "账户监管缺失", "只看缺账户监管"],
+                  ["repayClean3y", "近三年还款正常缺失", "只看缺还款正常"]
+                ] as const).map(([filter, label, title]) => (
+                  <MetricAction
+                    active={isEnergyWorkbenchOpen && energyFilter === filter}
+                    href={viewHref("projectInput", { projectStatus: "missing_fields", section: "projectTable" })}
+                    key={filter}
+                    label={label}
+                    onClick={(event) => {
+                      event.preventDefault();
+                      openEnergyWorkbench(filter);
+                    }}
+                    tone={missingEnergyCounts[filter] ? "warn" : "good"}
+                    title={title}
+                    value={missingEnergyCounts[filter]}
+                  />
+                ))}
+                <MetricAction
+                  active={false}
+                  href={viewHref("projectInput", { projectStatus: "ready", section: "projectTable" })}
+                  label="可能影响 R5 豁免"
+                  onClick={(event) => {
+                    event.preventDefault();
+                    openEnergyWorkbench("any");
+                  }}
+                  tone={missingEnergyCounts.any ? "warn" : "good"}
+                  title="字段补齐后由系统按 R5 重新判断是否免现场"
+                  value={energyPendingProjects.length}
+                />
+              </div>
+            </div>
+          ) : null}
           {importMessage ? <p className="helper-text">{importMessage}</p> : null}
           {bulkDeleteMessage ? <p className="helper-text">{bulkDeleteMessage}</p> : null}
         </div>
       </section>
+
+      {isEnergyWorkbenchOpen ? (
+        <section className="panel energy-workbench" ref={energyWorkbenchRef}>
+          <div className="section-title">
+            <div>
+              <h2>能源豁免条件批量确认工作台</h2>
+              <span>本次仅确认项目事实字段，不直接人工改写检查频次；系统将按 R5 重新判断是否免现场。</span>
+            </div>
+            <button className="button" type="button" onClick={() => setIsEnergyWorkbenchOpen(false)}>收起</button>
+          </div>
+          <div className="energy-filter-row">
+            {(Object.keys(energyFilterLabels) as EnergyMissingFilter[]).map((filter) => (
+              <button
+                className={`chip chip-button ${energyFilter === filter ? "active" : ""}`}
+                key={filter}
+                onClick={() => setEnergyFilter(filter)}
+                type="button"
+              >
+                {energyFilterLabels[filter]} · {missingEnergyCounts[filter]}
+              </button>
+            ))}
+          </div>
+          <div className={`bulk-action-bar ${selectedEnergyProjects.length ? "active" : ""}`}>
+            <div>
+              <strong>已选择 {selectedEnergyProjects.length} 个能源环保项目</strong>
+              <span>{energyRows.length ? `当前筛选结果 ${energyRows.length} 个，已选 ${selectedVisibleEnergyCount} 个` : "当前筛选下暂无待确认项目"}</span>
+            </div>
+            <div className="inline-actions">
+              <button className="button" type="button" disabled={!energyRows.length} onClick={() => toggleVisibleEnergySelection(!allVisibleEnergySelected)}>
+                {allVisibleEnergySelected ? "取消当前筛选" : "全选当前筛选"}
+              </button>
+              <button className="button" type="button" disabled={!selectedEnergyProjects.length} onClick={() => setSelectedEnergyProjectIds([])}>
+                清空选择
+              </button>
+            </div>
+          </div>
+          <div className="energy-bulk-editor">
+            {energyFieldKeys.map((field) => (
+              <label key={field}>
+                {energyFieldLabels[field]}
+                <select
+                  className="select"
+                  value={energyBulkValues[field]}
+                  onChange={(event) => setEnergyBulkValues((current) => ({ ...current, [field]: event.target.value as EnergyBulkValue }))}
+                >
+                  <option value="keep">保持不变</option>
+                  <option value="true">是</option>
+                  <option value="false">否</option>
+                </select>
+              </label>
+            ))}
+            <div className="energy-preview-card">
+              <span>保存前影响预览</span>
+              <strong>
+                {selectedEnergyProjects.length
+                  ? `${previewResolvedCount} 个可完成字段确认，${previewR5Count} 个可能免现场，${previewStillPendingCount} 个仍待确认`
+                  : "请选择项目并设置字段后预览"}
+              </strong>
+              <p>确认并重新校验后，候选排期、项目标签、待办数字和规则判断会同步刷新。</p>
+            </div>
+            <button className="button primary" type="button" disabled={!canSubmitEnergyBulk} onClick={submitEnergyBulkUpdate}>
+              确认并重新校验
+            </button>
+          </div>
+          {energyBulkMessage ? <div className={`action-message ${energyBulkMessage.includes("失败") || energyBulkMessage.includes("仅允许") ? "error" : "success"}`}>{energyBulkMessage}</div> : null}
+          <div className="table-wrap">
+            <table className="energy-workbench-table">
+              <thead>
+                <tr>
+                  <th className="selection-cell">
+                    <input
+                      aria-label="选择当前能源环保筛选结果"
+                      checked={allVisibleEnergySelected}
+                      disabled={!energyRows.length}
+                      onChange={(event) => toggleVisibleEnergySelection(event.target.checked)}
+                      type="checkbox"
+                    />
+                  </th>
+                  <th>项目</th>
+                  <th>集团/客户</th>
+                  <th>剩余敞口</th>
+                  <th>并网情况</th>
+                  <th>账户监管</th>
+                  <th>近三年还款正常</th>
+                  <th>当前规则判断</th>
+                  <th>操作</th>
+                </tr>
+              </thead>
+              <tbody>
+                {energyRows.length ? energyRows.map((project) => {
+                  const selected = selectedEnergyIdSet.has(project.id);
+                  return (
+                    <tr className={selected ? "selected-row" : ""} key={project.id}>
+                      <td className="selection-cell">
+                        <input
+                          aria-label={`选择${project.name || project.id}`}
+                          checked={selected}
+                          onChange={(event) => toggleEnergySelection(project.id, event.target.checked)}
+                          type="checkbox"
+                        />
+                      </td>
+                      <td>
+                        <div className="project-name">{project.name || "未命名项目"}</div>
+                        <div className="muted">{project.id} · {labelMaps.bizType[project.bizType]}</div>
+                      </td>
+                      <td>
+                        <div className="project-name">{project.groupName ?? "无归属集团"}</div>
+                        <div className="muted">{labelMaps.customerType[project.customerType]}</div>
+                      </td>
+                      <td>{(project.exposureBalance / 100_000_000).toFixed(2)} 亿</td>
+                      {energyFieldKeys.map((field) => (
+                        <td key={field}>
+                          <span className={`chip ${energyFieldMissing(project, field) ? "warning-chip" : project[field] ? "success-chip" : ""}`}>
+                            {energyFieldLabels[field].replace("情况", "").replace("正常", "")}：{energyBooleanLabel(project[field])}
+                          </span>
+                        </td>
+                      ))}
+                      <td>
+                        <div className="project-name">{needsEnergyExemptionReview(project) ? "R5 判断字段待确认" : satisfiesEnergyExemption(project) ? "可按 R5 免现场" : "不满足 R5 豁免"}</div>
+                        <div className="muted">能源环保 ≤3 亿</div>
+                      </td>
+                      <td>
+                        <button className="button" type="button" onClick={() => openProjectEditor(project, "energyExemption")}>单条维护</button>
+                      </td>
+                    </tr>
+                  );
+                }) : (
+                  <tr>
+                    <td colSpan={9}>
+                      <div className="empty-state">
+                        <strong>当前筛选下没有能源豁免字段待确认项目</strong>
+                        <p>可以切换筛选条件，或回到项目表格查看其他待补字段。</p>
+                      </div>
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </section>
+      ) : null}
 
       <section className="panel" ref={tableSectionRef}>
         <div className="section-title">
@@ -2450,7 +2997,13 @@ function ProjectInputView({
                     <td>
                       <div className="chips">
                         {readiness.fieldRequirements.length ? readiness.fieldRequirements.slice(0, 4).map((item) => (
-                          <button className="chip chip-button danger-chip" key={item.key} type="button" onClick={() => openProjectEditor(project, item.key)} title={item.reason}>
+                          <button
+                            className="chip chip-button danger-chip"
+                            key={item.key}
+                            type="button"
+                            onClick={() => item.key === "energyExemption" ? openEnergyWorkbench("any") : openProjectEditor(project, item.key)}
+                            title={item.reason}
+                          >
                             {item.label}
                           </button>
                         )) : (
@@ -2520,8 +3073,30 @@ function ProjectInputView({
         </div>
       ) : null}
 
-      {draft ? (
-        <section className="panel editor-panel">
+      <ProjectHandlingDrawer
+        activeRequirement={activeRequirement}
+        activeSection={activeSection}
+        isFieldHighlighted={isFieldHighlighted}
+        isSectionOpen={isSectionOpen}
+        onClose={closeProjectDrawer}
+        onFocusRequirement={focusRequirement}
+        onSave={saveDraft}
+        onSaveAndValidate={saveDraftAndValidate}
+        onSectionToggle={handleProjectSectionToggle}
+        onUpdate={updateDraft}
+        open={isProjectDrawerOpen}
+        people={people}
+        project={draft}
+        readiness={draftReadiness}
+        ruleImpacts={draftRuleImpacts}
+        sectionRequirement={sectionRequirement}
+        setFieldRef={setFieldRef}
+        validationMessage={validationMessage}
+      />
+
+      {/* Legacy inline project editor removed after drawer migration.
+      {draft && false ? (
+        <section className="panel project-editor-legacy-disabled">
           <div className="section-title">
             <div>
               <h2>{draft.name || "未命名项目"}</h2>
@@ -2673,6 +3248,7 @@ function ProjectInputView({
           </div>
         </section>
       ) : null}
+      */}
     </div>
   );
 }
@@ -2872,7 +3448,7 @@ function ProjectInputView({
       </section>
 
       {draft ? (
-        <section className="panel editor-panel">
+        <section className="panel legacy-inline-editor-panel">
           <div className="section-title">
             <div>
               <h2>编辑项目</h2>

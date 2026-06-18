@@ -11,6 +11,7 @@ outputs
 output
 tmp
 logs
+backups
 .DS_Store
 .claude
 .env

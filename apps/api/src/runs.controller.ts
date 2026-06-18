@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Inject, Param, Patch, Post, Query, UploadedFile, UseInterceptors } from "@nestjs/common";
+import { Body, Controller, Get, Headers, Inject, Param, Patch, Post, Query, UnauthorizedException, UploadedFile, UseInterceptors } from "@nestjs/common";
 import { FileInterceptor } from "@nestjs/platform-express";
 import type { AssigneePoolMode, Person, Project, RuleDecisionDraft, TagDefinition, TagScope, Task } from "@inspection/domain";
 import { WorkspaceService } from "./workspace.service.js";
@@ -7,9 +7,33 @@ import { WorkspaceService } from "./workspace.service.js";
 export class RunsController {
   constructor(@Inject(WorkspaceService) private readonly workspace: WorkspaceService) {}
 
+  private assertAdminToken(authorization?: string, tokenHeader?: string) {
+    const expected = process.env.WORKSPACE_ADMIN_TOKEN?.trim();
+    const provided = tokenHeader?.trim() || authorization?.replace(/^Bearer\s+/i, "").trim();
+    if (!expected || provided !== expected) {
+      throw new UnauthorizedException("工作区快照接口未授权");
+    }
+  }
+
   @Get("workspace")
   workspaceSummary() {
     return this.workspace.summary();
+  }
+
+  @Get("admin/workspace-snapshot")
+  workspaceSnapshot(@Headers("authorization") authorization?: string, @Headers("x-workspace-admin-token") tokenHeader?: string) {
+    this.assertAdminToken(authorization, tokenHeader);
+    return this.workspace.workspaceSnapshot();
+  }
+
+  @Post("admin/workspace-snapshot/restore")
+  restoreWorkspaceSnapshot(
+    @Headers("authorization") authorization: string | undefined,
+    @Headers("x-workspace-admin-token") tokenHeader: string | undefined,
+    @Body() body: ReturnType<WorkspaceService["workspaceSnapshot"]>
+  ) {
+    this.assertAdminToken(authorization, tokenHeader);
+    return this.workspace.restoreWorkspaceSnapshot(body);
   }
 
   @Get("tags")
@@ -131,6 +155,11 @@ export class RunsController {
   @Post("projects/bulk-delete")
   bulkDeleteProjects(@Body() body: { projectIds: string[] }) {
     return this.workspace.bulkDeleteProjects(body);
+  }
+
+  @Post("projects/bulk-update-energy-fields")
+  bulkUpdateEnergyFields(@Body() body: { projectIds: string[]; updates: Record<string, unknown>; reason?: string }) {
+    return this.workspace.bulkUpdateEnergyFields(body);
   }
 
   @Post("people")

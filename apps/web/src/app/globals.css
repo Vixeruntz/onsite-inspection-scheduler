@@ -2496,10 +2496,6 @@ button {
   accent-color: var(--teal);
 }
 
-.editor-panel {
-  border-color: #b8d7d7;
-}
-
 .project-editor-summary {
   display: grid;
   grid-template-columns: minmax(220px, 0.85fr) minmax(0, 1.15fr);
@@ -3236,6 +3232,123 @@ a.metric-action {
   border-color: rgba(16, 24, 40, 0.08);
   background: #ffffff;
   color: #667085;
+}
+
+.project-drawer-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 83;
+  pointer-events: none;
+}
+
+.project-drawer-backdrop {
+  position: absolute;
+  inset: 0;
+  border: 0;
+  background: rgba(17, 24, 39, 0.24);
+  backdrop-filter: blur(2px);
+  pointer-events: auto;
+}
+
+.project-handling-drawer {
+  position: absolute;
+  top: 16px;
+  right: 16px;
+  bottom: 16px;
+  display: grid;
+  width: min(680px, calc(100vw - 32px));
+  grid-template-rows: auto auto minmax(0, 1fr);
+  overflow: hidden;
+  border: 1px solid rgba(16, 24, 40, 0.12);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.98);
+  box-shadow: 0 28px 70px rgba(16, 24, 40, 0.2);
+  pointer-events: auto;
+}
+
+.project-drawer-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+  border-bottom: 1px solid rgba(16, 24, 40, 0.08);
+  background: #ffffff;
+  padding: 18px 18px 14px;
+}
+
+.project-drawer-header span {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 760;
+}
+
+.project-drawer-header h2 {
+  margin: 4px 0 0;
+  color: var(--text);
+  font-size: 18px;
+  line-height: 1.25;
+}
+
+.project-drawer-header p {
+  margin: 4px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.project-drawer-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  border-bottom: 1px solid rgba(16, 24, 40, 0.08);
+  background: #fbfcfd;
+  padding: 12px 18px;
+}
+
+.project-drawer-body {
+  display: grid;
+  align-content: start;
+  gap: 12px;
+  min-height: 0;
+  overflow: auto;
+  padding: 14px 18px 18px;
+}
+
+.project-drawer-body .project-editor-summary,
+.project-drawer-body .requirement-guide {
+  margin: 0;
+}
+
+.project-drawer-body .editor-grid {
+  padding: 0;
+}
+
+.project-drawer-body .policy-editor-section {
+  background: #ffffff;
+}
+
+.project-drawer-body details.policy-editor-section {
+  display: block;
+}
+
+.project-drawer-body .policy-editor-heading {
+  cursor: pointer;
+  list-style: none;
+}
+
+.project-drawer-body .policy-editor-heading::-webkit-details-marker {
+  display: none;
+}
+
+.project-drawer-body .policy-editor-heading::after {
+  content: "展开";
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 760;
+}
+
+.project-drawer-body details[open] > .policy-editor-heading::after {
+  content: "收起";
 }
 
 .people-capacity-cell {
@@ -5388,6 +5501,104 @@ summary:focus-visible {
   margin: -4px 0 0;
 }
 
+.energy-bulk-card {
+  display: grid;
+  gap: 16px;
+  border: 1px solid #cbe7e3;
+  border-radius: 14px;
+  background: #f7fcfb;
+  padding: 18px;
+}
+
+.section-title.compact-section-title {
+  align-items: center;
+  border: 0;
+  padding: 0;
+}
+
+.section-title.compact-section-title h3 {
+  margin: 0 0 4px;
+  color: var(--text);
+  font-size: 15px;
+  letter-spacing: 0;
+}
+
+.energy-metric-grid {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.energy-metric-grid .metric {
+  min-height: 92px;
+  border-radius: 10px;
+  padding: 16px;
+}
+
+.energy-metric-grid .metric-value {
+  margin-top: 10px;
+  font-size: 24px;
+}
+
+.energy-workbench {
+  scroll-margin-top: 18px;
+}
+
+.energy-filter-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 0 16px 14px;
+}
+
+.energy-bulk-editor {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(150px, 1fr)) minmax(260px, 1.3fr) auto;
+  gap: 12px;
+  align-items: end;
+  border-bottom: 1px solid var(--border);
+  background: #fff;
+  padding: 14px 16px;
+}
+
+.energy-bulk-editor label {
+  display: grid;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.energy-preview-card {
+  display: grid;
+  gap: 4px;
+  border: 1px solid #d5ece9;
+  border-radius: 10px;
+  background: #f8fcfb;
+  padding: 10px 12px;
+}
+
+.energy-preview-card span,
+.energy-preview-card p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.energy-preview-card strong {
+  color: var(--text);
+  font-size: 13px;
+}
+
+.energy-workbench > .action-message {
+  margin: 12px 16px 0;
+}
+
+.energy-workbench-table {
+  min-width: 1080px;
+}
+
 .metric-action:hover,
 .pending-card:hover,
 .manual-task:hover,
@@ -5714,6 +5925,14 @@ tr.selected-row td {
     padding: 20px 22px;
   }
 
+  .energy-metric-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .energy-bulk-editor {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
   .people-metrics {
     grid-template-columns: repeat(3, minmax(128px, 1fr));
   }
@@ -5970,6 +6189,20 @@ tr.selected-row td {
     font-size: 26px;
   }
 
+  .energy-bulk-card {
+    padding: 14px;
+  }
+
+  .energy-metric-grid,
+  .energy-bulk-editor {
+    grid-template-columns: 1fr;
+  }
+
+  .section-title.compact-section-title {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
   .bulk-action-bar {
     align-items: stretch;
     flex-direction: column;
@@ -6019,6 +6252,62 @@ tr.selected-row td {
 
   .rule-registry-row {
     padding: 12px;
+  }
+
+  .project-drawer-backdrop {
+    background: rgba(17, 24, 39, 0.32);
+  }
+
+  .project-handling-drawer {
+    top: auto;
+    right: 0;
+    bottom: 0;
+    left: 0;
+    width: 100vw;
+    max-height: calc(100vh - 24px);
+    border-right: 0;
+    border-bottom: 0;
+    border-left: 0;
+    border-radius: 8px 8px 0 0;
+  }
+
+  .project-drawer-header {
+    display: grid;
+    gap: 12px;
+    padding: 15px 14px 12px;
+  }
+
+  .project-drawer-header h2 {
+    font-size: 16px;
+  }
+
+  .project-drawer-header .inline-actions {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
+    width: 100%;
+  }
+
+  .project-drawer-header .button {
+    justify-content: center;
+    min-width: 0;
+    padding-right: 8px;
+    padding-left: 8px;
+    white-space: nowrap;
+  }
+
+  .project-drawer-summary {
+    padding: 10px 14px;
+  }
+
+  .project-drawer-body {
+    padding: 12px 14px 14px;
+  }
+
+  .project-drawer-body .project-editor-summary,
+  .project-drawer-body .project-editor-facts,
+  .project-drawer-body .form-grid,
+  .project-drawer-body .check-chip-grid {
+    grid-template-columns: 1fr;
   }
 
   .rule-drawer-backdrop {
